@@ -3,14 +3,17 @@ import json
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
+from sqlalchemy.orm import Session
 
 from app.config import API_KEY, MODELO, PORT
+from app.database import Base, SessionLocal, VagaDB, criar_tabelas, engine, get_db
 from app.models import AnaliseBancoTalentosResponse, AnaliseResponse, HealthResponse, VagaTalentoInput
+from app.services import vagas_service
 from app.openapi_docs import (
     ANALISE_EXAMPLE,
     APP_DESCRIPTION,
@@ -20,6 +23,7 @@ from app.openapi_docs import (
     TEXTO_VAGA_EXAMPLE,
 )
 from app.services.triagem import processar_banco_talentos, processar_triagem
+from app.services.ai_service import extrair_perfil_vaga
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -41,6 +45,15 @@ app = FastAPI(
         "name": "Uso interno",
     },
 )
+
+
+@app.on_event("startup")
+def startup():
+    try:
+        criar_tabelas()
+        logger.info("Tabelas verificadas/criadas com sucesso")
+    except Exception as e:
+        logger.error("Falha ao conectar/criar tabelas no MySQL: %s", e)
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -148,6 +161,12 @@ async def analyze(
             description="Um ou mais currículos em formato PDF. Repita o campo para enviar múltiplos arquivos.",
         ),
     ],
+    empresa_id: Annotated[
+        int,
+        Form(
+            description="ID da empresa dona da vaga (padrão: 1)",
+        ),
+    ] = 1,
 ):
     if not API_KEY:
         raise HTTPException(
@@ -160,7 +179,18 @@ async def analyze(
         raise HTTPException(status_code=400, detail="Envie ao menos um arquivo PDF.")
 
     try:
-        return await processar_triagem(texto_vaga, pdfs)
+        db = next(get_db())
+        # Extrai perfil e cadastra a vaga automaticamente
+        perfil = extrair_perfil_vaga(texto_vaga)
+        vaga = vagas_service.cadastrar_vaga(
+            db,
+            empresa_id=empresa_id,
+            titulo=perfil.titulo if perfil else "Vaga",
+            descricao=texto_vaga,
+            obrigatorios=perfil.requisitos_obrigatorios if perfil else [],
+            desejaveis=perfil.requisitos_desejaveis if perfil else [],
+        )
+        return await processar_triagem(texto_vaga, pdfs, db, vaga_id=vaga.id)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
     except Exception as e:
@@ -224,9 +254,107 @@ async def analyze_talent_bank(
         raise HTTPException(status_code=400, detail="vagas_json inválido. Envie um JSON válido.") from e
 
     try:
-        return await processar_banco_talentos(curriculo, vagas)
+        return await processar_banco_talentos(curriculo, vagas, next(get_db()))
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
     except Exception as e:
         logger.exception("Erro inesperado na análise do banco de talentos")
         raise HTTPException(status_code=500, detail="Erro interno ao processar análise.") from e
+
+
+# ==================== EMPRESAS ====================
+
+@app.post("/api/empresas/cadastrar", tags=["Empresas"], summary="Cadastrar empresa")
+def cadastrar_empresa(
+    nome: Annotated[str, Form()],
+    email: Annotated[str, Form()],
+    senha: Annotated[str, Form()],
+    db: Session = Depends(get_db),
+):
+    try:
+        empresa = vagas_service.cadastrar_empresa(db, nome, email, senha)
+        return {"id": empresa.id, "nome": empresa.nome, "email": empresa.email}
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@app.post("/api/empresas/login", tags=["Empresas"], summary="Login da empresa")
+def login_empresa(
+    email: Annotated[str, Form()],
+    senha: Annotated[str, Form()],
+    db: Session = Depends(get_db),
+):
+    empresa = vagas_service.login_empresa(db, email, senha)
+    if not empresa:
+        raise HTTPException(status_code=401, detail="Email ou senha inválidos.")
+    return {"id": empresa.id, "nome": empresa.nome, "email": empresa.email}
+
+
+# ==================== VAGAS ====================
+
+@app.post("/api/vagas", tags=["Cadastro"], summary="Cadastrar nova vaga")
+def cadastrar_vaga(
+    empresa_id: Annotated[int, Form(description="ID da empresa")],
+    titulo: Annotated[str, Form(description="Título da vaga")],
+    descricao: Annotated[str, Form(description="Descrição completa")],
+    db: Session = Depends(get_db),
+):
+    from app.services.ai_service import extrair_perfil_vaga
+    perfil = extrair_perfil_vaga(descricao)
+    obrig = perfil.requisitos_obrigatorios if perfil else []
+    desej = perfil.requisitos_desejaveis if perfil else []
+    vaga = vagas_service.cadastrar_vaga(db, empresa_id, titulo, descricao, obrig, desej)
+    return {"id": vaga.id, "titulo": vaga.titulo, "empresa_id": vaga.empresa_id, "status": vaga.status}
+
+
+@app.get("/api/vagas", tags=["Cadastro"], summary="Listar vagas abertas")
+def listar_vagas(
+    empresa_id: int = None,
+    db: Session = Depends(get_db),
+):
+    vagas = vagas_service.listar_vagas_abertas(db, empresa_id=empresa_id)
+    return [
+        {"id": v.id, "empresa_id": v.empresa_id, "titulo": v.titulo,
+         "status": v.status, "criada_em": str(v.criada_em)}
+        for v in vagas
+    ]
+
+
+@app.post("/api/vagas/{vaga_id}/analisar", tags=["Cadastro"], summary="Analisar CVs contra vaga cadastrada")
+async def analisar_vaga(
+    vaga_id: int,
+    curriculos: Annotated[list[UploadFile], File()],
+    db: Session = Depends(get_db),
+):
+    vaga = vagas_service.buscar_vaga(db, vaga_id)
+    if not vaga:
+        raise HTTPException(status_code=404, detail="Vaga não encontrada.")
+    if not API_KEY:
+        raise HTTPException(status_code=503, detail="API key não configurada.")
+    return await processar_triagem(vaga.descricao, curriculos, db, vaga_id=vaga_id)
+
+
+@app.get("/api/vagas/{vaga_id}/ranking", tags=["Cadastro"], summary="Ranking de candidatas por vaga")
+def ranking_vaga(vaga_id: int, db: Session = Depends(get_db)):
+    resultados = vagas_service.ranking_por_vaga(db, vaga_id)
+    return [
+        {"candidata": c.nome, "score": a.score, "status": a.status, "lacunas": a.lacunas}
+        for a, c in resultados
+    ]
+
+
+# ==================== CANDIDATAS ====================
+
+@app.get("/api/candidatas", tags=["Cadastro"], summary="Listar todas candidatas (banco compartilhado)")
+def listar_candidatas(db: Session = Depends(get_db)):
+    candidatas = vagas_service.listar_candidatas(db)
+    return [{"id": c.id, "nome": c.nome, "email": c.email} for c in candidatas]
+
+
+@app.get("/api/candidatas/{candidata_id}/vagas", tags=["Cadastro"], summary="Vagas compatíveis com a candidata")
+def vagas_candidata(candidata_id: int, db: Session = Depends(get_db)):
+    resultados = vagas_service.vagas_por_candidata(db, candidata_id)
+    return [
+        {"vaga": v.titulo, "empresa_id": v.empresa_id, "score": a.score, "status": a.status}
+        for a, v in resultados
+    ]

@@ -3,6 +3,7 @@ import logging
 from typing import List
 
 from fastapi import UploadFile
+from sqlalchemy.orm import Session
 
 from app.models import (
     AnaliseBancoTalentosResponse,
@@ -13,6 +14,7 @@ from app.models import (
 )
 from app.services.ai_service import analisar_cv, extrair_perfil_vaga, extrair_texto_pdf
 from app.services.scoring import calcular_score_ponderado
+from app.services.vagas_service import salvar_analise
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +24,12 @@ def _extrair_nome_candidato(nome_arquivo: str | None) -> str:
     return nome.rsplit(".", 1)[0].replace("_", " ").title()
 
 
-async def processar_triagem(texto_vaga: str, arquivos: List[UploadFile]) -> AnaliseResponse:
+async def processar_triagem(
+    texto_vaga: str,
+    arquivos: List[UploadFile],
+    db: Session,
+    vaga_id: int | None = None,
+) -> AnaliseResponse:
     perfil = extrair_perfil_vaga(texto_vaga)
     if not perfil:
         raise ValueError("Falha ao processar o texto da vaga. Verifique a API e tente novamente.")
@@ -41,10 +48,7 @@ async def processar_triagem(texto_vaga: str, arquivos: List[UploadFile]) -> Anal
             if not texto_cv.strip():
                 candidatos.append(
                     CandidatoResultado(
-                        nome=nome_exibicao,
-                        score=0,
-                        status="ERRO",
-                        eliminado=True,
+                        nome=nome_exibicao, score=0, status="ERRO", eliminado=True,
                         lacunas=["PDF sem texto legível"],
                     )
                 )
@@ -55,10 +59,7 @@ async def processar_triagem(texto_vaga: str, arquivos: List[UploadFile]) -> Anal
             if not analise:
                 candidatos.append(
                     CandidatoResultado(
-                        nome=nome_exibicao,
-                        score=0,
-                        status="ERRO",
-                        eliminado=True,
+                        nome=nome_exibicao, score=0, status="ERRO", eliminado=True,
                         lacunas=["Falha na análise por IA"],
                     )
                 )
@@ -67,6 +68,24 @@ async def processar_triagem(texto_vaga: str, arquivos: List[UploadFile]) -> Anal
 
             resultado = calcular_score_ponderado(analise)
             eliminado = resultado.status == "ELIMINADO"
+
+            obrig_dicts = [r.model_dump() for r in analise.analise_obrigatorios]
+            desej_dicts = [r.model_dump() for r in analise.analise_desejaveis]
+
+            # Salva no banco se houver vaga cadastrada
+            if vaga_id and db:
+                try:
+                    from app.services.vagas_service import cadastrar_candidata
+                    email_base = nome_exibicao.lower().replace(" ", ".") + "@cv.com"
+                    candidata = cadastrar_candidata(db, nome_exibicao, email_base, texto_cv)
+                    salvar_analise(
+                        db, vaga_id, candidata.id,
+                        resultado.score, resultado.status, resultado.lacunas,
+                        obrig_dicts, desej_dicts,
+                    )
+                    logger.info("Análise salva no banco: candidata=%s vaga=%d score=%d", nome_exibicao, vaga_id, resultado.score)
+                except Exception as e:
+                    logger.warning("Falha ao salvar análise no banco: %s", e)
 
             candidatos.append(
                 CandidatoResultado(
@@ -88,10 +107,7 @@ async def processar_triagem(texto_vaga: str, arquivos: List[UploadFile]) -> Anal
             logger.exception("Erro ao processar %s: %s", nome, e)
             candidatos.append(
                 CandidatoResultado(
-                    nome=nome_exibicao,
-                    score=0,
-                    status="ERRO",
-                    eliminado=True,
+                    nome=nome_exibicao, score=0, status="ERRO", eliminado=True,
                     lacunas=[str(e)],
                 )
             )
@@ -99,9 +115,7 @@ async def processar_triagem(texto_vaga: str, arquivos: List[UploadFile]) -> Anal
 
     aprovados = [c for c in candidatos if not c.eliminado]
     aprovados.sort(key=lambda c: c.score, reverse=True)
-
     eliminados_list = [c for c in candidatos if c.eliminado]
-    ranking_final = aprovados + eliminados_list
 
     return AnaliseResponse(
         titulo_vaga=perfil.titulo,
@@ -110,13 +124,14 @@ async def processar_triagem(texto_vaga: str, arquivos: List[UploadFile]) -> Anal
         eliminados=eliminados,
         requisitos_obrigatorios=perfil.requisitos_obrigatorios,
         requisitos_desejaveis=perfil.requisitos_desejaveis,
-        candidatos=ranking_final,
+        candidatos=aprovados + eliminados_list,
     )
 
 
 async def processar_banco_talentos(
     curriculo: UploadFile,
     vagas: List[VagaTalentoInput],
+    db: Session,
 ) -> AnaliseBancoTalentosResponse:
     candidato = _extrair_nome_candidato(curriculo.filename)
     resultados: List[ResultadoVagaTalento] = []
@@ -133,74 +148,57 @@ async def processar_banco_talentos(
 
     for vaga in vagas:
         if not vaga.candidato_cadastrado:
-            resultados.append(
-                ResultadoVagaTalento(
-                    vaga_id=vaga.vaga_id,
-                    titulo_vaga="Não analisada",
-                    candidato_cadastrado=False,
-                    analisado=False,
-                    status="NAO_CADASTRADO",
-                    pontos_melhorar=[
-                        "Cadastrar o candidato na vaga para habilitar a análise por IA.",
-                    ],
-                )
-            )
+            resultados.append(ResultadoVagaTalento(
+                vaga_id=vaga.vaga_id, titulo_vaga="Não analisada",
+                candidato_cadastrado=False, analisado=False,
+                status="NAO_CADASTRADO",
+            ))
             vagas_nao_cadastradas += 1
             continue
 
         perfil = extrair_perfil_vaga(vaga.texto_vaga)
         if not perfil:
-            resultados.append(
-                ResultadoVagaTalento(
-                    vaga_id=vaga.vaga_id,
-                    titulo_vaga="Erro ao processar vaga",
-                    candidato_cadastrado=True,
-                    analisado=False,
-                    status="ERRO_VAGA",
-                    pontos_melhorar=["Revisar a descrição da vaga e tentar novamente."],
-                )
-            )
+            resultados.append(ResultadoVagaTalento(
+                vaga_id=vaga.vaga_id, titulo_vaga="Erro ao processar vaga",
+                candidato_cadastrado=True, analisado=False, status="ERRO_VAGA",
+            ))
             vagas_reprovadas += 1
             continue
 
         analise = analisar_cv(texto_cv, perfil)
         if not analise:
-            resultados.append(
-                ResultadoVagaTalento(
-                    vaga_id=vaga.vaga_id,
-                    titulo_vaga=perfil.titulo,
-                    candidato_cadastrado=True,
-                    analisado=False,
-                    status="ERRO_ANALISE",
-                    pontos_melhorar=[
-                        "Não foi possível concluir a análise desta vaga no momento.",
-                    ],
-                )
-            )
+            resultados.append(ResultadoVagaTalento(
+                vaga_id=vaga.vaga_id, titulo_vaga=perfil.titulo,
+                candidato_cadastrado=True, analisado=False, status="ERRO_ANALISE",
+            ))
             vagas_reprovadas += 1
             continue
 
         resultado = calcular_score_ponderado(analise)
         aprovado = not resultado.lacunas
         status = "APROVADA" if aprovado else "REPROVADA"
-        pontos_melhorar = list(dict.fromkeys(resultado.lacunas))
-        if not pontos_melhorar:
-            pontos_melhorar = ["Perfil aderente aos requisitos obrigatórios da vaga."]
 
-        resultados.append(
-            ResultadoVagaTalento(
-                vaga_id=vaga.vaga_id,
-                titulo_vaga=perfil.titulo,
-                candidato_cadastrado=True,
-                analisado=True,
-                score=resultado.score,
-                status=status,
-                lacunas=resultado.lacunas,
-                pontos_melhorar=pontos_melhorar,
-                analise_obrigatorios=analise.analise_obrigatorios,
-                analise_desejaveis=analise.analise_desejaveis,
-            )
-        )
+        # Salva no banco
+        if db:
+            try:
+                from app.services.vagas_service import cadastrar_candidata
+                email_base = candidato.lower().replace(" ", ".") + "@cv.com"
+                candidata = cadastrar_candidata(db, candidato, email_base, texto_cv)
+                obrig = [r.model_dump() for r in analise.analise_obrigatorios]
+                desej = [r.model_dump() for r in analise.analise_desejaveis]
+                salvar_analise(db, int(vaga.vaga_id), candidata.id,
+                               resultado.score, status, resultado.lacunas, obrig, desej)
+            except Exception as e:
+                logger.warning("Falha ao salvar análise no banco: %s", e)
+
+        resultados.append(ResultadoVagaTalento(
+            vaga_id=vaga.vaga_id, titulo_vaga=perfil.titulo,
+            candidato_cadastrado=True, analisado=True,
+            score=resultado.score, status=status,
+            lacunas=resultado.lacunas,
+            analise_obrigatorios=analise.analise_obrigatorios,
+            analise_desejaveis=analise.analise_desejaveis,
+        ))
         vagas_analisadas += 1
         if aprovado:
             vagas_aprovadas += 1
