@@ -1,0 +1,245 @@
+================================================================================
+  INTEGRAÇÃO FRONTEND — GUIA PARA IMPLEMENTAR NO SEU SITE
+  API: Triagem de Currículos com IA
+================================================================================
+
+1. URL BASE
+--------------------------------------------------------------------------------
+
+  Desenvolvimento:  http://localhost:6000
+  Produção:         https://api.seu-dominio.com  (ou proxy no mesmo domínio)
+
+  Variável de ambiente no seu projeto:
+    VITE_API_URL=http://localhost:6000
+
+  JavaScript:
+    const API_BASE = import.meta.env.VITE_API_URL ?? "http://localhost:6000";
+
+
+2. CORS
+--------------------------------------------------------------------------------
+
+  O backend aceita qualquer origem (allow_origins: "*").
+  Seu site pode chamar a API direto do navegador.
+
+  Em produção com HTTPS, a API também deve ser HTTPS.
+
+  Alternativa — proxy no Nginx (recomendado em produção):
+    location /api/ {
+        proxy_pass http://127.0.0.1:6000/api/;
+        proxy_read_timeout 600s;
+        client_max_body_size 50M;
+    }
+  Com proxy, use API_BASE = "" (mesma origem do site).
+
+
+3. ENDPOINTS
+--------------------------------------------------------------------------------
+
+  ── GET /api/health ──────────────────────────────────────────
+
+  Verifica se API está online.
+
+  Resposta 200:
+  {
+    "status": "ok",
+    "api_configured": true,
+    "model": "gemini-3.1-flash-lite",
+    "port": 6000
+  }
+
+
+  ── POST /api/analyze ────────────────────────────────────────
+
+  Content-Type: multipart/form-data  (NÃO use JSON)
+
+  Campos:
+    texto_vaga   string   obrigatório   mínimo 20 caracteres
+    curriculos   File[]   obrigatório   um ou mais PDFs
+
+  Para múltiplos PDFs, repita o campo "curriculos":
+    form.append("curriculos", arquivo1);
+    form.append("curriculos", arquivo2);
+
+  Resposta 200:
+  {
+    "titulo_vaga": "Desenvolvedor Python",
+    "total_cvs": 3,
+    "aprovados": 2,
+    "eliminados": 1,
+    "requisitos_obrigatorios": ["Python 3 anos", "Git"],
+    "requisitos_desejaveis": ["FastAPI", "Docker"],
+    "candidatos": [
+      {
+        "nome": "Joao Silva",
+        "score": 90,
+        "status": "EXCELENTE",
+        "eliminado": false,
+        "lacunas": [],
+        "analise_obrigatorios": [
+          { "requisito": "...", "atende": true, "evidencia_literal": "..." }
+        ],
+        "analise_desejaveis": [
+          { "requisito": "...", "atende": true, "evidencia_literal": "..." }
+        ]
+      }
+    ]
+  }
+
+  Erros:
+    400  → Nenhum PDF enviado
+    422  → Texto da vaga inválido ou IA falhou
+    503  → GEMINI_API_KEY não configurada
+    500  → Erro interno
+
+
+4. CÓDIGO — CLIENTE API (copiar para seu projeto)
+--------------------------------------------------------------------------------
+
+  // api/triagem.js
+
+  const API_BASE = import.meta.env.VITE_API_URL ?? "http://localhost:6000";
+
+  export async function checkHealth() {
+    const res = await fetch(`${API_BASE}/api/health`);
+    if (!res.ok) throw new Error("API indisponível");
+    return res.json();
+  }
+
+  export async function analyzeResumes(textoVaga, files) {
+    const form = new FormData();
+    form.append("texto_vaga", textoVaga);
+
+    files
+      .filter((f) => f.name.toLowerCase().endsWith(".pdf"))
+      .forEach((file) => form.append("curriculos", file));
+
+    const res = await fetch(`${API_BASE}/api/analyze`, {
+      method: "POST",
+      body: form,
+    });
+
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      const msg = Array.isArray(data.detail)
+        ? data.detail.map((d) => d.msg || d).join(", ")
+        : data.detail || "Erro ao processar triagem";
+      throw new Error(msg);
+    }
+
+    return data;
+  }
+
+
+5. EXEMPLO DE USO NO SEU SITE
+--------------------------------------------------------------------------------
+
+  // Ao enviar formulário
+  async function iniciarTriagem() {
+    const textoVaga = document.querySelector("#vaga").value.trim();
+    const files = Array.from(document.querySelector("#pdfs").files);
+
+    if (textoVaga.length < 20) {
+      alert("Vaga deve ter pelo menos 20 caracteres.");
+      return;
+    }
+    if (!files.length) {
+      alert("Adicione ao menos um PDF.");
+      return;
+    }
+
+    try {
+      const resultado = await analyzeResumes(textoVaga, files);
+
+      console.log("Vaga:", resultado.titulo_vaga);
+      console.log("Aprovados:", resultado.aprovados);
+
+      resultado.candidatos.forEach((c, i) => {
+        console.log(`${i + 1}º ${c.nome} — ${c.score} pts — ${c.status}`);
+      });
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+
+6. TIPOS TYPESCRIPT (opcional)
+--------------------------------------------------------------------------------
+
+  interface VerificacaoRequisito {
+    requisito: string;
+    atende: boolean;
+    evidencia_literal: string;
+  }
+
+  interface CandidatoResultado {
+    nome: string;
+    score: number;
+    status: string;
+    eliminado: boolean;
+    lacunas: string[];
+    analise_obrigatorios?: VerificacaoRequisito[];
+    analise_desejaveis?: VerificacaoRequisito[];
+  }
+
+  interface AnaliseResponse {
+    titulo_vaga: string;
+    total_cvs: number;
+    aprovados: number;
+    eliminados: number;
+    requisitos_obrigatorios: string[];
+    requisitos_desejaveis: string[];
+    candidatos: CandidatoResultado[];
+  }
+
+
+7. FLUXO DA UI RECOMENDADO
+--------------------------------------------------------------------------------
+
+  1. Carregar página → GET /api/health (mostrar online/offline)
+  2. Usuário cola vaga + seleciona PDFs
+  3. Validar localmente (≥20 chars, ≥1 PDF)
+  4. POST /api/analyze com spinner de loading
+  5. Exibir ranking:
+     - Título da vaga
+     - Tags de requisitos
+     - Lista de candidatos (score, status)
+     - Detalhes: lacunas e evidências por requisito
+
+  TEMPO: ~10–30s por CV. Não use timeout curto no fetch.
+
+
+8. STATUS DOS CANDIDATOS (labels para exibir)
+--------------------------------------------------------------------------------
+
+  EXCELENTE     → Excelente candidato       (score ≥ 85, todos obrig)
+  POTENCIAL     → Bom potencial             (score ≥ 60, todos obrig)
+  OK            → Atende o básico
+  OPORTUNIDADE  → Oportunidade              (faltam obrig, tem desejáveis)
+  PARCIAL       → Perfil parcial
+  ELIMINADO     → Não recomendado           (score = 0)
+  ERRO          → Erro no processamento
+
+
+9. CHECKLIST DE IMPLEMENTAÇÃO
+--------------------------------------------------------------------------------
+
+  [ ] Configurar API_BASE (env ou proxy)
+  [ ] Textarea para descrição da vaga
+  [ ] Input file múltiplo (accept=".pdf")
+  [ ] Validação antes do POST
+  [ ] Loading durante análise (pode demorar minutos)
+  [ ] Tratamento de erros (campo "detail" da resposta)
+  [ ] Ranking com score e status
+  [ ] Detalhes: lacunas + evidências por candidato
+  [ ] Health check ao abrir a página
+
+
+10. TESTAR A API
+--------------------------------------------------------------------------------
+
+  Swagger interativo:  http://localhost:6000/docs
+  ReDoc:               http://localhost:6000/redoc
+
+================================================================================

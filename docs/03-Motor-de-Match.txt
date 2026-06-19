@@ -1,0 +1,186 @@
+================================================================================
+  MOTOR DE MATCH — PSEUDOCÓDIGO E VALIDAÇÃO MATEMÁTICA
+  Sistema: Triagem de Currículos com IA
+  Arquivo fonte: backend/app/services/scoring.py
+================================================================================
+
+1. VISÃO EM DUAS CAMADAS
+--------------------------------------------------------------------------------
+
+O match não é um único algoritmo. São duas camadas:
+
+  Camada      | Responsável              | Tipo
+  ------------|--------------------------|----------------------------------
+  Semântica   | Gemini (ai_service.py)   | IA decide se cada requisito é atendido
+  Numérica    | scoring.py               | Cálculo determinístico sobre vetores binários
+
+A IA recebe o texto do CV e cada requisito, e retorna atende ∈ {0, 1} por item.
+O score é calculado localmente sobre esses booleanos.
+
+
+2. PSEUDOCÓDIGO COMPLETO
+--------------------------------------------------------------------------------
+
+ENTRADA:
+  analise.analise_obrigatorios[]  → lista de { requisito, atende, evidencia_literal }
+  analise.analise_desejaveis[]    → lista de { requisito, atende, evidencia_literal }
+
+// Contagem de hits
+n_obrig   ← tamanho(analise.analise_obrigatorios)
+hit_obrig ← contar(r | r ∈ obrigatórios, r.atende = TRUE)
+
+n_desej   ← tamanho(analise.analise_desejaveis)
+hit_desej ← contar(r | r ∈ desejáveis, r.atende = TRUE)
+
+// Cobertura proporcional (recall)
+SE n_obrig > 0:
+    score_obrig ← (hit_obrig / n_obrig) × 80
+SENÃO:
+    score_obrig ← 0
+
+SE n_desej > 0:
+    score_desej ← (hit_desej / n_desej) × 20
+SENÃO:
+    score_desej ← 0
+
+score_final ← INT(score_obrig + score_desej)
+
+lacunas ← [ r.requisito | r ∈ obrigatórios, r.atende = FALSE ]
+
+todos_obrig ← (n_obrig = 0) OU (hit_obrig = n_obrig)
+
+SE todos_obrig:
+    SE score_final ≥ 85 → status ← "EXCELENTE"
+    SENÃO SE score_final ≥ 60 → status ← "POTENCIAL"
+    SENÃO → status ← "OK"
+SENÃO SE hit_desej ≥ 1:
+    status ← "OPORTUNIDADE"
+SENÃO SE score_final > 0:
+    status ← "PARCIAL"
+SENÃO:
+    status ← "ELIMINADO"
+
+SAÍDA: (score_final, status, lacunas)
+
+
+3. FORMULAÇÃO MATEMÁTICA
+--------------------------------------------------------------------------------
+
+Vetores binários (candidato c, vaga v):
+
+  O = {o₁, o₂, …, oₙ}     requisitos obrigatórios, |O| = n
+  D = {d₁, d₂, …, dₘ}     requisitos desejáveis,   |D| = m
+
+  xᶜ ∈ {0,1}ⁿ   onde xᵢᶜ = 1 se c atende oᵢ, 0 caso contrário
+  yᶜ ∈ {0,1}ᵐ   onde yⱼᶜ = 1 se c atende dⱼ, 0 caso contrário
+
+Função de score:
+
+  Recall_obrig(c) = (Σᵢ xᵢᶜ) / n = hit_obrig / n_obrig
+  Recall_desej(c) = (Σⱼ yⱼᶜ) / m = hit_desej / n_desej
+
+  S(c) = 80 · Recall_obrig(c) + 20 · Recall_desej(c)
+
+Propriedades matemáticas:
+
+  Propriedade     | Demonstração
+  ----------------|--------------------------------------------------
+  Domínio         | S ∈ [0, 100], pois cada recall ∈ [0,1] e 80+20=100
+  Monotonicidade  | Se xᵢᶜ passa de 0→1, S não diminui
+  Peso relativo   | Obrigatório pesa 4× mais que desejável (80 vs 20)
+  Independência   | Recall_obrig e Recall_desej calculados separadamente
+  Linearidade     | S é combinação linear dos recalls com pesos fixos
+
+
+4. COMPARAÇÃO COM JACCARD E COSSENO
+--------------------------------------------------------------------------------
+
+Índice de Jaccard:
+  J(A, B) = |A ∩ B| / |A ∪ B|
+
+O que o projeto usa:
+  Cobertura(A, B) = |A ∩ B| / |B|   ← recall de B coberto por A
+
+Diferença: Jaccard usa união no denominador; o projeto usa |B| (tamanho dos
+requisitos). Conclusão: o motor implementa RECALL PONDERADO, não Jaccard clássico.
+
+Similaridade por cosseno:
+  cos(θ) = (u · v) / (‖u‖ · ‖v‖)
+
+Não se aplica na camada de score porque:
+  - Não há embeddings numéricos em scoring.py
+  - Vetores são binários (dimensão = número de requisitos)
+  - Similaridade semântica é resolvida pela IA, não por produto interno local
+
+
+5. TABELA DE VALIDAÇÃO NUMÉRICA
+--------------------------------------------------------------------------------
+
+  Cenário               | Obrig  | Desej  | Cálculo | Score | Status
+  ----------------------|--------|--------|---------|-------|-------------
+  Perfil ideal          | 2/2    | 2/2    | 80+20   | 100   | EXCELENTE
+  Bom, 1 desej faltando | 2/2    | 1/2    | 80+10   | 90    | EXCELENTE
+  Oportunidade          | 1/2    | 2/2    | 40+20   | 60    | OPORTUNIDADE
+  Só parte dos obrig    | 1/2    | 0/2    | 40+0    | 40    | PARCIAL
+  Nenhum requisito      | 0/1    | 0/1    | 0+0     | 0     | ELIMINADO
+  Todos obrig, sem desej| 2/2    | 0/0    | 80+0    | 80    | POTENCIAL
+
+Verificação do caso "Oportunidade":
+  Obrigatórios: 2 requisitos → atende 1  →  Recall = 1/2 = 0,5  →  40 pts
+  Desejáveis:   2 requisitos → atende 2  →  Recall = 2/2 = 1,0  →  20 pts
+  S = 40 + 20 = 60  →  hit_desej = 2 ≥ 1  →  status = OPORTUNIDADE
+
+Observação sobre status OK:
+  Se existe ≥1 obrigatório e todos são atendidos: score_obrig = 80 → S ≥ 80.
+  Com obrigatórios definidos e todos atendidos, status será EXCELENTE ou POTENCIAL,
+  nunca OK. Status OK só ocorre quando n_obrig = 0.
+
+
+6. FLUXO DO MOTOR
+--------------------------------------------------------------------------------
+
+  [Texto da Vaga] ──► IA extrai requisitos O e D (PerfilVaga)
+  [PDF do CV]     ──► pdfplumber extrai texto (até 3 páginas)
+                           │
+                           ▼
+                    IA avalia cada requisito → xᵢ ∈ {0,1}
+                           │
+                           ▼
+                    Recall_obrig = Σx/n  |  Recall_desej = Σy/m
+                           │
+                           ▼
+                    S = 80·Recall_obrig + 20·Recall_desej
+                           │
+                           ▼
+                    Classificação por limiares e regras
+                           │
+                           ▼
+                    Ranking decrescente por S
+
+
+7. REGRAS DE ELIMINAÇÃO E RANKING
+--------------------------------------------------------------------------------
+
+  eliminado = TRUE  somente quando status = "ELIMINADO" (S = 0)
+
+  Ranking:
+    1. Candidatos não eliminados, ordenados por score decrescente
+    2. Candidatos eliminados, ao final
+
+  Candidatos com status OPORTUNIDADE entram no ranking mesmo sem cumprir
+  todos os obrigatórios, desde que atendam ≥1 desejável.
+
+
+8. RESUMO
+--------------------------------------------------------------------------------
+
+  Pergunta              | Resposta
+  ----------------------|--------------------------------------------------
+  Usa Jaccard?          | Não. Usa recall (hits/total) por conjunto.
+  Usa cosseno?          | Não. Sem embeddings na camada de score.
+  O que é o match?      | IA decide atende ∈ {0,1} por requisito.
+  Fórmula implementada  | S = 80·(hits_obrig/n_obrig) + 20·(hits_desej/n_desej)
+  Tipo matemático       | Cobertura ponderada (weighted recall)
+  Arquivo fonte         | backend/app/services/scoring.py
+
+================================================================================

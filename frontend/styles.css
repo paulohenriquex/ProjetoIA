@@ -1,0 +1,344 @@
+:root {
+  --bg: #0f1117;
+  --surface: #181b24;
+  --border: #2a2f3d;
+  --text: #e8eaef;
+  --text-muted: #8b92a5;
+  --accent: #6366f1;
+  --accent-hover: #818cf8;
+  --success: #22c55e;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+  --excellent: #a78bfa;
+  --radius: 12px;
+  --shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: "DM Sans", system-ui, sans-serif;
+  color: var(--text);
+  background:
+    radial-gradient(ellipse 80% 50% at 50% -20%, rgba(99, 102, 241, 0.15), transparent),
+    var(--bg);
+  line-height: 1.5;
+}
+
+.hidden { display: none !important; }
+
+.app {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem 4rem;
+}
+
+.header { text-align: center; margin-bottom: 2.5rem; }
+
+.header h1 {
+  font-family: "Instrument Serif", Georgia, serif;
+  font-size: 2.5rem;
+  font-weight: 400;
+  margin: 0 0 0.5rem;
+}
+
+.header p { color: var(--text-muted); margin: 0; }
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.75rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  margin-top: 1rem;
+}
+
+.status-badge.online { background: rgba(34, 197, 94, 0.15); color: var(--success); }
+.status-badge.offline { background: rgba(239, 68, 68, 0.15); color: var(--danger); }
+
+.status-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+}
+
+@media (max-width: 768px) {
+  .grid { grid-template-columns: 1fr; }
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.5rem;
+  box-shadow: var(--shadow);
+}
+
+.card h2 {
+  font-size: 1.1rem;
+  margin: 0 0 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.vaga-input {
+  width: 100%;
+  min-height: 220px;
+  padding: 1rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.95rem;
+  resize: vertical;
+}
+
+.vaga-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+}
+
+.dropzone {
+  border: 2px dashed var(--border);
+  border-radius: 8px;
+  padding: 2rem 1rem;
+  text-align: center;
+  cursor: pointer;
+  background: var(--bg);
+  transition: all 0.2s;
+}
+
+.dropzone:hover, .dropzone.dragover {
+  border-color: var(--accent);
+  background: rgba(99, 102, 241, 0.05);
+}
+
+.dropzone p { margin: 0.25rem 0; color: var(--text-muted); font-size: 0.9rem; }
+.dropzone strong { color: var(--accent); }
+
+.file-list { margin-top: 1rem; display: flex; flex-direction: column; gap: 0.5rem; }
+
+.file-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 0.8rem;
+  background: var(--bg);
+  border-radius: 6px;
+  font-size: 0.875rem;
+}
+
+.file-item button {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 1.1rem;
+}
+
+.file-item button:hover { color: var(--danger); }
+
+.actions { margin-top: 1.5rem; display: flex; justify-content: center; }
+
+.btn-primary {
+  background: var(--accent);
+  color: white;
+  padding: 0.85rem 2rem;
+  font-size: 1rem;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  font-family: inherit;
+  font-weight: 500;
+}
+
+.btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  padding: 3rem;
+  color: var(--text-muted);
+}
+
+.spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.error-banner {
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: #fca5a5;
+  padding: 1rem 1.25rem;
+  border-radius: 8px;
+  margin-bottom: 1.5rem;
+  font-size: 0.9rem;
+}
+
+.results { margin-top: 2rem; }
+
+.results-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.results-header h2 {
+  font-family: "Instrument Serif", Georgia, serif;
+  font-size: 1.75rem;
+  font-weight: 400;
+  margin: 0;
+}
+
+.stats { display: flex; gap: 1rem; flex-wrap: wrap; }
+
+.stat {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.5rem 1rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.stat strong { color: var(--text); }
+
+.requisitos { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1.5rem; }
+
+.tag {
+  font-size: 0.78rem;
+  padding: 0.3rem 0.65rem;
+  border-radius: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.tag.obrigatorio { border-color: rgba(239, 68, 68, 0.3); color: #fca5a5; }
+.tag.desejavel { border-color: rgba(99, 102, 241, 0.3); color: #a5b4fc; }
+
+.section-title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin: 1rem 0 0.5rem;
+}
+
+.candidatos-list { display: flex; flex-direction: column; gap: 0.75rem; }
+
+.candidato-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.candidato-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  cursor: pointer;
+}
+
+.candidato-rank { font-size: 0.85rem; font-weight: 600; color: var(--text-muted); min-width: 2rem; }
+.candidato-info { flex: 1; }
+.candidato-info h3 { margin: 0 0 0.15rem; font-size: 1rem; }
+.candidato-meta { font-size: 0.8rem; color: var(--text-muted); }
+
+.score-badge {
+  font-size: 1.1rem;
+  font-weight: 700;
+  padding: 0.4rem 0.8rem;
+  border-radius: 8px;
+  min-width: 4rem;
+  text-align: center;
+}
+
+.score-badge.excelente { background: rgba(167, 139, 250, 0.2); color: var(--excellent); }
+.score-badge.potencial { background: rgba(34, 197, 94, 0.15); color: var(--success); }
+.score-badge.ok { background: rgba(245, 158, 11, 0.15); color: var(--warning); }
+.score-badge.eliminado, .score-badge.erro { background: rgba(239, 68, 68, 0.12); color: var(--danger); }
+.score-badge.oportunidade { background: rgba(56, 189, 248, 0.15); color: #38bdf8; }
+.score-badge.parcial { background: rgba(251, 191, 36, 0.12); color: #fbbf24; }
+
+.status-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.25rem 0.6rem;
+  border-radius: 4px;
+}
+
+.status-label.excelente { background: rgba(167, 139, 250, 0.15); color: var(--excellent); }
+.status-label.potencial { background: rgba(34, 197, 94, 0.12); color: var(--success); }
+.status-label.ok { background: rgba(245, 158, 11, 0.12); color: var(--warning); }
+.status-label.eliminado, .status-label.erro { background: rgba(239, 68, 68, 0.12); color: var(--danger); }
+.status-label.oportunidade { background: rgba(56, 189, 248, 0.12); color: #38bdf8; }
+.status-label.parcial { background: rgba(251, 191, 36, 0.12); color: #fbbf24; }
+
+.chevron { color: var(--text-muted); transition: transform 0.2s; }
+.candidato-card.expanded .chevron { transform: rotate(180deg); }
+
+.candidato-details {
+  display: none;
+  padding: 0 1.25rem 1.25rem;
+  border-top: 1px solid var(--border);
+}
+
+.candidato-card.expanded .candidato-details { display: block; }
+
+.lacunas {
+  margin: 1rem 0;
+  padding: 0.75rem 1rem;
+  background: rgba(239, 68, 68, 0.08);
+  border-radius: 6px;
+  font-size: 0.85rem;
+}
+
+.lacunas ul { margin: 0.5rem 0 0; padding-left: 1.2rem; }
+
+.requisito-grid { display: grid; gap: 0.5rem; margin-top: 0.5rem; }
+
+.requisito-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 0.6rem 0.8rem;
+  background: var(--bg);
+  border-radius: 6px;
+  font-size: 0.85rem;
+}
+
+.evidencia {
+  display: block;
+  margin-top: 0.25rem;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-style: italic;
+}
