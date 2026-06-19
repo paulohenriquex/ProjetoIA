@@ -1,5 +1,6 @@
-import logging
+import asyncio
 import json
+import logging
 from pathlib import Path
 from typing import Annotated
 
@@ -11,7 +12,7 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.config import API_KEY, MODELO, PORT
-from app.database import Base, SessionLocal, VagaDB, criar_tabelas, engine, get_db
+from app.database import Base, CandidataDB, SessionLocal, VagaDB, criar_tabelas, engine, get_db
 from app.models import AnaliseBancoTalentosResponse, AnaliseResponse, HealthResponse, VagaTalentoInput
 from app.services import vagas_service
 from app.openapi_docs import (
@@ -22,8 +23,9 @@ from app.openapi_docs import (
     TAGS_METADATA,
     TEXTO_VAGA_EXAMPLE,
 )
+from app.services.ai_service import analisar_cv, extrair_perfil_vaga, extrair_texto_pdf
+from app.services.scoring import calcular_score_ponderado
 from app.services.triagem import processar_banco_talentos, processar_triagem
-from app.services.ai_service import extrair_perfil_vaga
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -345,7 +347,68 @@ def ranking_vaga(vaga_id: int, db: Session = Depends(get_db)):
 
 # ==================== CANDIDATAS ====================
 
-@app.get("/api/candidatas", tags=["Cadastro"], summary="Listar todas candidatas (banco compartilhado)")
+@app.post("/api/candidatas/cadastrar", tags=["Candidatas"], summary="Candidata cadastra currículo")
+async def cadastrar_candidata(
+    nome: Annotated[str, Form()],
+    email: Annotated[str, Form()],
+    curriculo: Annotated[UploadFile, File(description="Currículo em PDF")],
+    db: Session = Depends(get_db),
+):
+    if not curriculo.filename or not curriculo.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Envie um arquivo PDF.")
+    conteudo = await curriculo.read()
+    texto_cv = extrair_texto_pdf(conteudo)
+    if not texto_cv.strip():
+        raise HTTPException(status_code=400, detail="PDF sem texto legível.")
+    candidata = vagas_service.cadastrar_candidata(db, nome, email, texto_cv)
+    return {"id": candidata.id, "nome": candidata.nome, "email": candidata.email}
+
+
+@app.post("/api/candidatas/{candidata_id}/analisar", tags=["Candidatas"],
+         summary="Analisar candidata contra todas as vagas abertas")
+async def analisar_candidata(candidata_id: int, db: Session = Depends(get_db)):
+    if not API_KEY:
+        raise HTTPException(status_code=503, detail="API key não configurada.")
+
+    candidata = db.query(CandidataDB).filter(CandidataDB.id == candidata_id).first()
+    if not candidata:
+        raise HTTPException(status_code=404, detail="Candidata não encontrada.")
+
+    vagas_abertas = vagas_service.listar_vagas_abertas(db)
+    if not vagas_abertas:
+        return {"candidata": candidata.nome, "vagas": [], "mensagem": "Nenhuma vaga aberta no momento."}
+
+    resultados = []
+    for vaga in vagas_abertas:
+        perfil = extrair_perfil_vaga(vaga.descricao)
+        if not perfil:
+            continue
+        analise = analisar_cv(candidata.curriculo_texto, perfil)
+        if not analise:
+            continue
+        score_result = calcular_score_ponderado(analise)
+        obrig = [r.model_dump() for r in analise.analise_obrigatorios]
+        desej = [r.model_dump() for r in analise.analise_desejaveis]
+        vagas_service.salvar_analise(
+            db, vaga.id, candidata_id,
+            score_result.score, score_result.status, score_result.lacunas,
+            obrig, desej,
+        )
+        resultados.append({
+            "vaga_id": vaga.id,
+            "vaga": vaga.titulo,
+            "empresa_id": vaga.empresa_id,
+            "score": score_result.score,
+            "status": score_result.status,
+            "lacunas": score_result.lacunas,
+        })
+        await asyncio.sleep(1)
+
+    resultados.sort(key=lambda r: r["score"], reverse=True)
+    return {"candidata": candidata.nome, "total_vagas": len(vagas_abertas), "resultados": resultados}
+
+
+@app.get("/api/candidatas", tags=["Candidatas"], summary="Listar todas candidatas (banco compartilhado)")
 def listar_candidatas(db: Session = Depends(get_db)):
     candidatas = vagas_service.listar_candidatas(db)
     return [{"id": c.id, "nome": c.nome, "email": c.email} for c in candidatas]
