@@ -169,6 +169,7 @@ async def analyze(
             description="ID da empresa dona da vaga (padrão: 1)",
         ),
     ] = 1,
+    db: Session = Depends(get_db),
 ):
     if not API_KEY:
         raise HTTPException(
@@ -181,7 +182,6 @@ async def analyze(
         raise HTTPException(status_code=400, detail="Envie ao menos um arquivo PDF.")
 
     try:
-        db = next(get_db())
         # Extrai perfil e cadastra a vaga automaticamente
         perfil = extrair_perfil_vaga(texto_vaga)
         vaga = vagas_service.cadastrar_vaga(
@@ -235,6 +235,7 @@ async def analyze_talent_bank(
             ),
         ),
     ],
+    db: Session = Depends(get_db),
 ):
     if not API_KEY:
         raise HTTPException(
@@ -256,7 +257,7 @@ async def analyze_talent_bank(
         raise HTTPException(status_code=400, detail="vagas_json inválido. Envie um JSON válido.") from e
 
     try:
-        return await processar_banco_talentos(curriculo, vagas, next(get_db()))
+        return await processar_banco_talentos(curriculo, vagas, db)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
     except Exception as e:
