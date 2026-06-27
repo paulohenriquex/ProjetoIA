@@ -1,7 +1,7 @@
 import hashlib
 from datetime import datetime
 
-from sqlalchemy import JSON, Column, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, create_engine
+from sqlalchemy import JSON, BigInteger, Column, DateTime, ForeignKey, Integer, String, Text, Numeric, UniqueConstraint, create_engine
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
 from app.config import DATABASE_URL
@@ -11,37 +11,53 @@ SessionLocal = sessionmaker(bind=engine)
 Base = declarative_base()
 
 
+class UsuarioDB(Base):
+    __tablename__ = "usuarios"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    email = Column(String(150), unique=True, nullable=False)
+    tipo = Column(String(20)) # 'candidata' ou 'empresa'
+    provider = Column(String(20), default="google")
+    provider_user_id = Column(String(100), nullable=False)
+    foto_url = Column(String(255))
+    data_criacao = Column(DateTime, default=datetime.utcnow)
+
+
 class EmpresaDB(Base):
     __tablename__ = "empresas"
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    nome = Column(String(200), nullable=False)
-    email = Column(String(200), unique=True, nullable=False)
-    senha = Column(String(255), nullable=False)
-    criada_em = Column(DateTime, default=datetime.utcnow)
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    usuario_id = Column(BigInteger, ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False)
+    razao_social = Column(String(150), nullable=False)
+    cnpj = Column(String(18), unique=True, nullable=False)
+    descricao_empresa = Column(Text)
+    setor = Column(String(100))
 
 
 class VagaDB(Base):
     __tablename__ = "vagas"
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    empresa_id = Column(Integer, ForeignKey("empresas.id", ondelete="CASCADE"), nullable=False)
-    titulo = Column(String(200), nullable=False)
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    empresa_id = Column(BigInteger, ForeignKey("empresas.id", ondelete="CASCADE"), nullable=False)
+    titulo = Column(String(100), nullable=False)
     descricao = Column(Text, nullable=False)
-    requisitos_obrigatorios = Column(JSON, nullable=True)
-    requisitos_desejaveis = Column(JSON, nullable=True)
-    status = Column(String(20), default="ABERTA")
-    criada_em = Column(DateTime, default=datetime.utcnow)
+    requisitos_minimos = Column(Text)
+    modalidade = Column(String(20)) # enum('presencial','remoto','hibrido')
+    nivel = Column(String(20)) # enum('junior','pleno','senior','estagio')
+    salario_estimado = Column(Numeric(10, 2))
+    data_publicacao = Column(DateTime, default=datetime.utcnow)
 
 
 class CandidataDB(Base):
     __tablename__ = "candidatas"
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    nome = Column(String(200), nullable=False)
-    email = Column(String(200), unique=True, nullable=False)
-    curriculo_texto = Column(Text, nullable=False)
-    criada_em = Column(DateTime, default=datetime.utcnow)
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    usuario_id = Column(BigInteger, ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False)
+    nome_completo = Column(String(150), nullable=False)
+    cpf = Column(String(14), unique=True)
+    biografia = Column(Text)
+    linkedin_url = Column(String(255))
+    status_vulnerabilidade = Column(Integer, default=0) # tinyint(1) no banco
 
 
 class AnaliseDB(Base):
@@ -50,9 +66,9 @@ class AnaliseDB(Base):
         UniqueConstraint("vaga_id", "candidata_id", name="unica_analise"),
     )
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    vaga_id = Column(Integer, ForeignKey("vagas.id", ondelete="CASCADE"), nullable=False)
-    candidata_id = Column(Integer, ForeignKey("candidatas.id", ondelete="CASCADE"), nullable=False)
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    vaga_id = Column(BigInteger, ForeignKey("vagas.id", ondelete="CASCADE"), nullable=False)
+    candidata_id = Column(BigInteger, ForeignKey("candidatas.id", ondelete="CASCADE"), nullable=False)
     score = Column(Integer, nullable=False)
     status = Column(String(30), nullable=False)
     lacunas = Column(JSON, nullable=True)

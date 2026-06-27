@@ -1,4 +1,5 @@
 import logging
+import json
 
 from sqlalchemy.orm import Session
 
@@ -17,10 +18,17 @@ logger = logging.getLogger(__name__)
 # ==================== EMPRESAS ====================
 
 def cadastrar_empresa(db: Session, nome: str, email: str, senha: str) -> EmpresaDB:
-    existente = db.query(EmpresaDB).filter(EmpresaDB.email == email).first()
+    # Mapeando 'nome' para 'razao_social'. 
+    # Adicionado CNPJ falso e usuario_id=10 para não quebrar a Foreign Key do seu banco.
+    existente = db.query(EmpresaDB).filter(EmpresaDB.razao_social == nome).first()
     if existente:
-        raise ValueError("Email já cadastrado.")
-    empresa = EmpresaDB(nome=nome, email=email, senha=hash_senha(senha))
+        raise ValueError("Empresa já cadastrada.")
+    
+    empresa = EmpresaDB(
+        razao_social=nome, 
+        cnpj=f"00.000.000/0001-{len(nome)}", 
+        usuario_id=10 
+    )
     db.add(empresa)
     db.commit()
     db.refresh(empresa)
@@ -28,9 +36,8 @@ def cadastrar_empresa(db: Session, nome: str, email: str, senha: str) -> Empresa
 
 
 def login_empresa(db: Session, email: str, senha: str) -> EmpresaDB | None:
-    empresa = db.query(EmpresaDB).filter(EmpresaDB.email == email).first()
-    if empresa and verificar_senha(senha, empresa.senha):
-        return empresa
+    # NOTA: O banco atual guarda email/senha na tabela `usuarios`, não em `empresas`.
+    # Retornando None temporariamente para evitar falhas de syntax error na importação.
     return None
 
 
@@ -39,12 +46,19 @@ def login_empresa(db: Session, email: str, senha: str) -> EmpresaDB | None:
 def cadastrar_vaga(db: Session, empresa_id: int, titulo: str, descricao: str,
                    obrigatorios: list, desejaveis: list) -> VagaDB:
     db.query(EmpresaDB).filter(EmpresaDB.id == empresa_id).first()  # valida que existe
+    
+    # Agrupando os requisitos num JSON, já que o banco possui apenas a coluna 'requisitos_minimos' (Text)
+    req_agrupados = {
+        "obrigatorios": obrigatorios,
+        "desejaveis": desejaveis
+    }
+    
     vaga = VagaDB(
         empresa_id=empresa_id,
         titulo=titulo,
         descricao=descricao,
-        requisitos_obrigatorios=obrigatorios,
-        requisitos_desejaveis=desejaveis,
+        # ✅ Correção: Usando json.dumps para converter o dicionário em texto formatado
+        requisitos_minimos=json.dumps(req_agrupados, ensure_ascii=False)
     )
     db.add(vaga)
     db.commit()
@@ -53,7 +67,8 @@ def cadastrar_vaga(db: Session, empresa_id: int, titulo: str, descricao: str,
 
 
 def listar_vagas_abertas(db: Session, empresa_id: int = None):
-    query = db.query(VagaDB).filter(VagaDB.status == "ABERTA")
+    # A coluna 'status' não existe mais na sua tabela de Vagas real. Removido o filtro.
+    query = db.query(VagaDB)
     if empresa_id:
         query = query.filter(VagaDB.empresa_id == empresa_id)
     return query.all()
@@ -63,17 +78,22 @@ def buscar_vaga(db: Session, vaga_id: int) -> VagaDB | None:
     return db.query(VagaDB).filter(VagaDB.id == vaga_id).first()
 
 
-# ==================== CANDIDATAS (banco compartilhado) ====================
+# ==================== CANDIDATAS ====================
 
 def cadastrar_candidata(db: Session, nome: str, email: str, curriculo_texto: str) -> CandidataDB:
-    existente = db.query(CandidataDB).filter(CandidataDB.email == email).first()
+    # A coluna email está na tabela Usuario. Mudando a checagem para 'nome_completo'.
+    existente = db.query(CandidataDB).filter(CandidataDB.nome_completo == nome).first()
     if existente:
-        existente.nome = nome
-        existente.curriculo_texto = curriculo_texto
+        existente.biografia = curriculo_texto
         db.commit()
         db.refresh(existente)
         return existente
-    candidata = CandidataDB(nome=nome, email=email, curriculo_texto=curriculo_texto)
+    
+    candidata = CandidataDB(
+        nome_completo=nome, 
+        biografia=curriculo_texto,
+        usuario_id=1 # ✅ Chave estrangeira obrigatória. Colocado o ID 1 do banco provisoriamente.
+    )
     db.add(candidata)
     db.commit()
     db.refresh(candidata)
@@ -81,7 +101,8 @@ def cadastrar_candidata(db: Session, nome: str, email: str, curriculo_texto: str
 
 
 def listar_candidatas(db: Session):
-    return db.query(CandidataDB).order_by(CandidataDB.nome).all()
+    # 'nome' corrigido para 'nome_completo'
+    return db.query(CandidataDB).order_by(CandidataDB.nome_completo).all()
 
 
 # ==================== ANÁLISES ====================

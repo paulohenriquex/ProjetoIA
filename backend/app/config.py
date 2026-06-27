@@ -1,6 +1,7 @@
 import os
 import sys
 from pathlib import Path
+from urllib.parse import quote_plus
 
 from dotenv import load_dotenv
 
@@ -26,11 +27,15 @@ PORT = int(os.environ.get("BACKEND_PORT", "8080"))
 
 MYSQL_HOST = os.environ.get("MYSQL_HOST", "localhost")
 MYSQL_PORT = int(os.environ.get("MYSQL_PORT", "3306"))
-MYSQL_USER = os.environ.get("MYSQL_USER", "root")
+MYSQL_USER = os.environ.get("MYSQL_USER", "")
 MYSQL_PASSWORD = os.environ.get("MYSQL_PASSWORD", "")
-MYSQL_DATABASE = os.environ.get("MYSQL_DATABASE", "triagem_db")
+MYSQL_DATABASE = os.environ.get("MYSQL_DATABASE", "")
 
 if not MYSQL_PASSWORD:
     raise RuntimeError("MYSQL_PASSWORD não configurada no .env")
 
-DATABASE_URL = f"mysql+pymysql://{MYSQL_USER}:{MYSQL_PASSWORD}@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DATABASE}"
+# Codificando a senha para tratar caracteres especiais (como o '@')
+senha_segura = quote_plus(MYSQL_PASSWORD)
+
+# Montando a URL usando a senha_segura
+DATABASE_URL = f"mysql+pymysql://{MYSQL_USER}:{senha_segura}@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DATABASE}"
